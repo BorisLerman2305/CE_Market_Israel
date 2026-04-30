@@ -1,0 +1,32 @@
+# ── Secrets — NEVER commit ────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# ── Generated outputs (reproducible from data) ────────────────────────────────
+outputs/charts/*.png
+outputs/reports/*.xlsx
+
+# ── Claude Code local settings ────────────────────────────────────────────────
+.claude/
+
+# ── Old/backup files ──────────────────────────────────────────────────────────
+pages/1_Cross_Reference.py
+*.xlsx~
+צמה*.xlsx
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
