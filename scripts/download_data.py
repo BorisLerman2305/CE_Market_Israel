@@ -51,34 +51,67 @@ async def _find_and_download(dry_run: bool) -> bool:
         )
         page = await context.new_page()
 
+        # ── intercept network requests to catch file downloads ────────────────
+        downloaded_url: list[str] = []
+
+        async def handle_response(response):
+            ct = response.headers.get("content-type", "")
+            url = response.url
+            if any(x in ct for x in ["spreadsheet", "excel", "octet-stream"]):
+                downloaded_url.append(url)
+                print(f"[download_data] Intercepted file response: {url}  ({ct})")
+            if url.lower().endswith((".xlsx", ".xls")):
+                downloaded_url.append(url)
+                print(f"[download_data] Intercepted xlsx URL: {url}")
+
+        page.on("response", handle_response)
+
         print(f"[download_data] Opening {CHAMBER_URL}")
         await page.goto(CHAMBER_URL, wait_until="networkidle", timeout=45_000)
 
-        # ── collect all Excel links ───────────────────────────────────────────
-        links: list[dict] = await page.evaluate("""() => {
-            const anchors = Array.from(document.querySelectorAll('a[href]'));
-            return anchors
-                .filter(a => /\\.xlsx?/i.test(a.href) || /\\.xlsx?/i.test(a.getAttribute('href')))
-                .map(a => ({href: a.href, text: a.textContent.trim()}));
+        # Extra wait for lazy-loaded content
+        await page.wait_for_timeout(5_000)
+
+        # ── screenshot for debugging (saved as artifact) ──────────────────────
+        screenshot_path = ROOT / "scripts" / "debug_screenshot.png"
+        await page.screenshot(path=str(screenshot_path), full_page=True)
+        print(f"[download_data] Screenshot saved to {screenshot_path}")
+
+        # ── dump ALL links for inspection ─────────────────────────────────────
+        all_links: list[dict] = await page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('a[href]'))
+                .map(a => ({href: a.href, text: a.textContent.trim().substring(0, 80)}))
+                .filter(l => l.href && !l.href.startsWith('javascript'));
         }""")
+        print(f"[download_data] All links on page ({len(all_links)}):")
+        for l in all_links:
+            print(f"  {l['text']!r:40s}  {l['href']}")
 
-        # Fallback: look for any link whose text or href suggests a download
-        if not links:
-            links = await page.evaluate("""() => {
-                const anchors = Array.from(document.querySelectorAll('a[href]'));
-                return anchors
-                    .filter(a => {
-                        const t = (a.textContent + a.href).toLowerCase();
-                        return t.includes('הורד') || t.includes('download')
-                            || t.includes('קובץ') || t.includes('file')
-                            || t.includes('excel') || t.includes('xls');
-                    })
-                    .map(a => ({href: a.href, text: a.textContent.trim()}));
-            }""")
+        # ── also check page text for clues ────────────────────────────────────
+        page_text = await page.evaluate("() => document.body.innerText")
+        print(f"[download_data] Page text snippet: {page_text[:800]}")
 
-        print(f"[download_data] Links found: {links}")
+        # ── search for Excel links ─────────────────────────────────────────────
+        xlsx_links: list[dict] = [
+            l for l in all_links
+            if ".xlsx" in l["href"].lower() or ".xls" in l["href"].lower()
+        ]
 
-        if not links:
+        # Fallback: Hebrew download keywords
+        if not xlsx_links:
+            xlsx_links = [
+                l for l in all_links
+                if any(kw in (l["text"] + l["href"]).lower()
+                       for kw in ["הורד", "download", "קובץ", "excel", "xls", "file", "צמ"])
+            ]
+
+        # Fallback: use any URL caught by network interception
+        if not xlsx_links and downloaded_url:
+            xlsx_links = [{"href": downloaded_url[0], "text": "intercepted"}]
+
+        print(f"[download_data] Excel/download links found: {xlsx_links}")
+
+        if not xlsx_links:
             print("[download_data] ERROR: No download links found on page.")
             await browser.close()
             return False
@@ -88,12 +121,14 @@ async def _find_and_download(dry_run: bool) -> bool:
             await browser.close()
             return True
 
-        # ── download the first (most recent) file ────────────────────────────
-        link = links[0]
+        # ── download the first (most recent) file ─────────────────────────────
+        link = xlsx_links[0]
         print(f"[download_data] Downloading: {link['href']}")
 
+        raw_bytes: bytes | None = None
+
+        # Method 1: direct HTTP download
         try:
-            # Direct URL download
             import urllib.request
             req = urllib.request.Request(
                 link["href"],
@@ -101,15 +136,28 @@ async def _find_and_download(dry_run: bool) -> bool:
             )
             with urllib.request.urlopen(req, timeout=60) as resp:
                 raw_bytes = resp.read()
-        except Exception:
-            # Fallback: use playwright click-and-wait approach
-            async with page.expect_download(timeout=60_000) as dl_info:
-                await page.click(f"a[href='{link['href']}']")
-            download = await dl_info.value
-            tmp = await download.path()
-            raw_bytes = Path(tmp).read_bytes()
+            print(f"[download_data] Direct download OK ({len(raw_bytes):,} bytes)")
+        except Exception as e:
+            print(f"[download_data] Direct download failed: {e}")
 
-        # ── detect period and save ────────────────────────────────────────────
+        # Method 2: playwright click + download event
+        if not raw_bytes:
+            try:
+                async with page.expect_download(timeout=60_000) as dl_info:
+                    await page.click(f"a[href='{link['href']}']")
+                download = await dl_info.value
+                tmp = await download.path()
+                raw_bytes = Path(tmp).read_bytes()
+                print(f"[download_data] Click download OK ({len(raw_bytes):,} bytes)")
+            except Exception as e:
+                print(f"[download_data] Click download failed: {e}")
+
+        if not raw_bytes:
+            print("[download_data] ERROR: All download methods failed.")
+            await browser.close()
+            return False
+
+        # ── detect period and save ─────────────────────────────────────────────
         dest, label = _detect_period(raw_bytes)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(raw_bytes)
