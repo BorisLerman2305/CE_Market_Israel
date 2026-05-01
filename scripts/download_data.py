@@ -2,9 +2,13 @@
 Monthly auto-download of the latest CE / forklift registration Excel
 from the Chamber of Commerce website.
 
+Strategy: use Playwright to intercept ALL network responses coming from
+the page and its sub-resources, catching /media/*.xlsx URLs regardless of
+whether they appear in the rendered DOM.
+
 Usage:
     python scripts/download_data.py           # download + save
-    python scripts/download_data.py --dry-run # find links only, no save
+    python scripts/download_data.py --dry-run # find URL only, no save
 
 Requires:
     pip install playwright pandas openpyxl
@@ -22,10 +26,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-INDEX_URL  = "https://www.chamber.org.il/sectors/1238/1249/14824/14902/"
-BASE_URL   = "https://www.chamber.org.il"
-# Files always live under /media/<id>/ — match both xlsx and xls
-MEDIA_RE   = re.compile(r'/media/\d+/[^"\'>\s]+\.xlsx?', re.IGNORECASE)
+INDEX_URL = "https://www.chamber.org.il/sectors/1238/1249/14824/14902/"
+BASE_URL  = "https://www.chamber.org.il"
+MEDIA_RE  = re.compile(r'(?:https?://[^"\'>\s]*)?/media/\d+/[^"\'>\s]+\.xlsx?', re.IGNORECASE)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,7 +43,6 @@ def _detect_period(raw_bytes: bytes) -> tuple[Path, str]:
 
 
 def _fetch_bytes(url: str) -> bytes:
-    """Download a URL using a browser-like User-Agent."""
     req = urllib.request.Request(
         url,
         headers={
@@ -56,13 +58,17 @@ def _fetch_bytes(url: str) -> bytes:
         return r.read()
 
 
-async def _scrape_media_links() -> list[str]:
-    """
-    Open the index page with Playwright (to execute JS), then search the
-    rendered HTML for /media/<id>/*.xlsx links.
-    Returns absolute URLs, ordered as they appear (last = most recent).
-    """
+def _normalise(url: str) -> str:
+    """Ensure the URL is absolute."""
+    if url.startswith("/"):
+        return BASE_URL + url
+    return url
+
+
+async def _find_xlsx_url() -> str | None:
     from playwright.async_api import async_playwright
+
+    found: list[str] = []
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -76,44 +82,76 @@ async def _scrape_media_links() -> list[str]:
         )
         page = await context.new_page()
 
-        print(f"[download_data] Loading index page …")
-        await page.goto(INDEX_URL, wait_until="networkidle", timeout=45_000)
+        # ── intercept every network response ──────────────────────────────────
+        async def on_response(response):
+            url = response.url
+            # 1. URL itself is an xlsx file
+            if re.search(r'\.xlsx?', url, re.I):
+                print(f"[download_data] Direct xlsx response: {url}")
+                found.append(url)
+                return
+            # 2. Parse response body (JSON / HTML) for /media/*.xlsx patterns
+            try:
+                ct = response.headers.get("content-type", "")
+                if any(t in ct for t in ("json", "html", "text", "javascript")):
+                    body = await response.text()
+                    matches = MEDIA_RE.findall(body)
+                    for m in matches:
+                        full = _normalise(m)
+                        if full not in found:
+                            print(f"[download_data] Found in response body ({url}): {full}")
+                            found.append(full)
+            except Exception:
+                pass
 
-        # Dismiss accessibility widget if present
+        page.on("response", on_response)
+
+        # ── load the index page ───────────────────────────────────────────────
+        print(f"[download_data] Loading {INDEX_URL}")
+        await page.goto(INDEX_URL, wait_until="networkidle", timeout=60_000)
         await page.keyboard.press("Escape")
-        await page.wait_for_timeout(2_000)
+        await page.wait_for_timeout(3_000)
 
-        # Scroll to bottom to trigger any lazy-loaded content
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(8_000)   # wait for AJAX/lazy content
+        # ── scroll slowly to trigger lazy content ─────────────────────────────
+        for pct in [25, 50, 75, 100]:
+            await page.evaluate(
+                f"window.scrollTo(0, document.body.scrollHeight * {pct/100})"
+            )
+            await page.wait_for_timeout(2_000)
 
-        # Pull full rendered HTML
-        html = await page.content()
+        # ── try clicking anything that looks like a month/article link ────────
+        clickable = await page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('a[href]'))
+                .map(a => a.href)
+                .filter(h => h.includes('/sectors/') || h.includes('/articles/') ||
+                             h.includes('/news/') || h.includes('/items/'));
+        }""")
+        print(f"[download_data] Sector/article links to try: {clickable[:5]}")
+
+        for link in clickable[:5]:          # try up to 5 sub-pages
+            try:
+                print(f"[download_data] Visiting sub-page: {link}")
+                await page.goto(link, wait_until="networkidle", timeout=30_000)
+                await page.wait_for_timeout(3_000)
+                if found:
+                    break
+            except Exception as e:
+                print(f"[download_data] Sub-page error: {e}")
+
         await browser.close()
 
-    # Find all /media/.../צמה... or similar .xlsx links
-    matches = MEDIA_RE.findall(html)
-    # Deduplicate while preserving order
-    seen, unique = set(), []
-    for m in matches:
-        if m not in seen:
-            seen.add(m)
-            unique.append(BASE_URL + m)
-
-    print(f"[download_data] Media/xlsx links found in HTML: {unique}")
-    return unique
+    print(f"[download_data] All xlsx URLs intercepted: {found}")
+    return found[-1] if found else None   # last = most recent
 
 
-async def _find_and_download(dry_run: bool) -> bool:
-    links = await _scrape_media_links()
+async def _run(dry_run: bool) -> bool:
+    url = await _find_xlsx_url()
 
-    if not links:
-        print("[download_data] ERROR: No /media/*.xlsx links found on page.")
+    if not url:
+        print("[download_data] ERROR: Could not find any xlsx URL.")
         return False
 
-    # Always use the LAST link (most recent month)
-    url = links[-1]
-    print(f"[download_data] Latest file URL: {url}")
+    print(f"[download_data] Using URL: {url}")
 
     if dry_run:
         print("[download_data] Dry-run — skipping download.")
@@ -136,7 +174,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    success = asyncio.run(_find_and_download(dry_run=args.dry_run))
+    success = asyncio.run(_run(dry_run=args.dry_run))
     if not success:
         print("[download_data] FAILED — no file was saved.")
         sys.exit(1)
