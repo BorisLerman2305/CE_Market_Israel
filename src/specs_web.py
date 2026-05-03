@@ -1220,12 +1220,49 @@ _S = {
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+# Maps every variant found in the raw data → canonical DB key used in _S
+_MFR_ALIASES: dict[str, str] = {
+    # JCB
+    "J.C.B (BAMFORD)":      "JCB",
+    "J.C.B + VIBROMAX":     "JCB",
+    "J.C.B":                "JCB",
+    # JLG
+    "J.L.G":                "JLG",
+    # Hamm
+    "HAMM (GEBRUEDER)":     "HAMM",
+    # Genie
+    "GENIE - BOOM":         "GENIE",
+    # Kobelco (typo in raw data)
+    "KOBELKO":              "KOBELCO",
+    # Doosan family
+    "DAEWOO-DOOSAN":        "DOOSAN",
+    "DOOSAN-BOBCAT":        "DOOSAN",
+    # Bobcat
+    "BOBCAT (DOOSAN)":      "BOBCAT",
+    # Caterpillar
+    "CAT":                  "CATERPILLAR",
+    # Volvo
+    "VOLVO CE":             "VOLVO",
+    # Kalmar
+    "KALMAR (LMV)":         "KALMAR",
+    # Atlet
+    "ATLET - NISSAN":       "ATLET",
+}
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s).strip().upper())
 
 
+def _resolve_mfr(manufacturer: str) -> str:
+    """Normalize and apply alias mapping so data names match DB keys."""
+    n = _norm(manufacturer)
+    return _MFR_ALIASES.get(n, n)
+
+
 def _lookup_static(manufacturer: str, model: str) -> dict | None:
-    mfr = _norm(manufacturer)
+    mfr = _resolve_mfr(manufacturer)
     mdl = _norm(model)
     exact = f"{mfr}|{mdl}"
     if exact in _S:
@@ -1305,7 +1342,7 @@ def _try_volvo_fetch(model: str, category_en: str) -> dict | None:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 def get_manufacturer_url(manufacturer: str) -> str | None:
-    key = _norm(manufacturer)
+    key = _resolve_mfr(manufacturer)
     if key in MANUFACTURER_SITES:
         return MANUFACTURER_SITES[key]
     for k, v in MANUFACTURER_SITES.items():
