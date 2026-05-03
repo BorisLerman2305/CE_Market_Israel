@@ -8,7 +8,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from src.loader import load_annual
 from src.matcher import ai_match
-from src.specs import get_specs
 
 st.markdown("""
 <style>
@@ -300,32 +299,4 @@ st.dataframe(
     hide_index=True, use_container_width=True,
 )
 
-# ── Technical specs comparison ────────────────────────────────────────────────
-st.markdown("#### 📐 מפרטים טכניים")
-
-with st.spinner("מחפש מפרטים..."):
-    specs_base = get_specs(sel_cat_en, base_mfr, base_model)
-    specs_comp = get_specs(sel_cat_en, comp_mfr, comp_model)
-
-if specs_base is None and specs_comp is None:
-    st.caption("מפרטים טכניים לא זמינים (נדרש מפתח API)")
-else:
-    all_keys = list(dict.fromkeys(
-        list(specs_base.keys() if specs_base else []) +
-        list(specs_comp.keys() if specs_comp else [])
-    ))
-    specs_base = specs_base or {}
-    specs_comp = specs_comp or {}
-
-    specs_df = pd.DataFrame({
-        "מדד": all_keys,
-        f"🔵 {base_mfr} — {base_model}": [
-            specs_base.get(k, "—") for k in all_keys
-        ],
-        f"🔴 {comp_mfr} — {comp_model}": [
-            specs_comp.get(k, "—") for k in all_keys
-        ],
-    })
-
-    st.dataframe(specs_df, hide_index=True, use_container_width=True)
-    st.caption("מקור: נתוני יצרן | נאסף ע\"י AI — יש לאמת מול מפרט רשמי")
+st.caption("💡 למפרטים טכניים מפורטים עבור כל דגם — עברו לעמוד **📐 מפרטים טכניים**")

@@ -205,35 +205,42 @@ fig_heat.update_layout(
 )
 st.plotly_chart(fig_heat, use_container_width=True, config={"displayModeBar": False})
 
-# ── Row 3: Scatter — size vs growth ──────────────────────────────────────────
-scatter_data = stats[stats["yoy_pct"].notna()].copy()
-if not scatter_data.empty and _yoy_curr:
-    st.markdown(f"#### 🎯 גודל שוק מול {_yoy_col}")
-    fig_sc = px.scatter(
-        scatter_data,
-        x="יחידות", y="yoy_pct",
-        size="יחידות", color="ריכוזיות",
-        hover_name="סגמנט",
-        text="סגמנט",
-        labels={"יחידות": "סה\"כ יחידות", "yoy_pct": f"{_yoy_col} (%)"},
-        color_discrete_map={
-            "שוק תחרותי": "#27AE60",
-            "ריכוז מתון":  "#F39C12",
-            "שוק מרוכז":  "#E74C3C",
-        },
-    )
-    fig_sc.add_hline(y=0, line_dash="dot", line_color="#AAA", opacity=0.7)
-    fig_sc.update_traces(textposition="top center", textfont_size=9)
-    fig_sc.update_layout(
-        height=460,
+# ── Row 3: YoY growth horizontal bar chart ────────────────────────────────────
+yoy_data = stats[stats["yoy_pct"].notna()].copy()
+if not yoy_data.empty and _yoy_curr:
+    st.markdown(f"#### 📈 שינוי שנתי לפי סגמנט ({_yoy_col})")
+    yoy_data = yoy_data.sort_values("yoy_pct").reset_index(drop=True)
+    _colors = ["#E74C3C" if v < 0 else "#27AE60" for v in yoy_data["yoy_pct"]]
+
+    fig_yoy = go.Figure(go.Bar(
+        x=yoy_data["yoy_pct"],
+        y=yoy_data["סגמנט"],
+        orientation="h",
+        marker_color=_colors,
+        text=[f"{v:+.1f}%" for v in yoy_data["yoy_pct"]],
+        textposition="outside",
+        textfont_size=10,
+        customdata=yoy_data[["יחידות", "מוביל"]].values,
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "שינוי: %{x:+.1f}%<br>"
+            "יחידות: %{customdata[0]:,}<br>"
+            "מוביל: %{customdata[1]}<extra></extra>"
+        ),
+    ))
+    fig_yoy.add_vline(x=0, line_color="#999", line_width=1.5)
+    fig_yoy.update_layout(
+        height=max(340, len(yoy_data) * 28),
+        xaxis=dict(
+            title=f"{_yoy_col} (%)",
+            showgrid=True, gridcolor="#EEE", zeroline=False,
+            ticksuffix="%",
+        ),
+        yaxis=dict(showgrid=False, automargin=True),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=True, gridcolor="#EEE", title="סה\"כ יחידות"),
-        yaxis=dict(showgrid=True, gridcolor="#EEE", title=f"{_yoy_col} (%)"),
-        legend=dict(title="ריכוזיות", orientation="h", yanchor="bottom",
-                    y=1.02, xanchor="right", x=1),
-        margin=dict(t=40, b=30, l=0, r=0),
+        margin=dict(t=10, b=10, l=10, r=90),
     )
-    st.plotly_chart(fig_sc, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig_yoy, use_container_width=True, config={"displayModeBar": False})
 
 # ── Summary table ─────────────────────────────────────────────────────────────
 st.markdown("#### 📋 טבלת סגמנטים")

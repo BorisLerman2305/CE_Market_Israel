@@ -204,8 +204,13 @@ def get_specs(category_en: str, manufacturer: str, model: str) -> dict | None:
         "Return ONLY a JSON object with these exact Hebrew keys and their values as strings "
         "(numbers formatted with commas, units omitted since they are in the key):\n"
         f"{fields_json}\n\n"
-        'Use null for unknown values. If you are not confident about a spec, use null.\n'
-        'Example: {"משקל עצמי (ק\\"ג)": "12,500", "הספק מנוע (kW)": "55.4"}'
+        'Also include the key "_url" with the direct product page URL on the manufacturer\'s '
+        'official website for this specific model. If the exact model URL is unknown, provide '
+        'the manufacturer\'s main equipment category page URL. Do not use null for "_url" — '
+        'always provide at minimum the manufacturer homepage.\n'
+        'Use null for unknown spec values. If not confident about a spec, use null.\n'
+        'Example: {"משקל עצמי (ק\\"ג)": "12,500", "הספק מנוע (kW)": "55.4", '
+        '"_url": "https://www.caterpillar.com/en/products/construction/..."}'
     )
 
     try:
@@ -214,7 +219,7 @@ def get_specs(category_en: str, manufacturer: str, model: str) -> dict | None:
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=300,
+            max_tokens=450,
             messages=[{"role": "user", "content": prompt}],
         )
 
