@@ -8,9 +8,9 @@ st.set_page_config(
 )
 
 pg = st.navigation([
-    st.Page("pages/market.py",     title="שוק הצמ\"ה",     icon="🏗️", url_path="market"),
-    st.Page("pages/cross_ref.py",  title="קרוס רפרנס",     icon="🔄", url_path="cross-ref"),
-    st.Page("pages/overview.py",   title="סקירה כללית",    icon="🗺️", url_path="overview"),
-    st.Page("pages/specs_page.py", title="מפרטים טכניים",  icon="📐", url_path="specs"),
+    st.Page("pages/_market.py",     title="שוק הצמ\"ה",    icon="🏗️"),
+    st.Page("pages/_cross_ref.py",  title="קרוס רפרנס",    icon="🔄"),
+    st.Page("pages/_overview.py",   title="סקירה כללית",   icon="🗺️"),
+    st.Page("pages/_specs_page.py", title="מפרטים טכניים", icon="📐"),
 ])
 pg.run()
